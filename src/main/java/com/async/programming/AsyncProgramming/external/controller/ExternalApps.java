@@ -13,9 +13,7 @@ import org.springframework.web.client.RestTemplate;
 
 import java.time.Duration;
 import java.time.LocalTime;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 
@@ -141,6 +139,84 @@ public class ExternalApps {
             Duration duration = Duration.between(start, end);
             System.out.println("Took " + duration.toMillis() + " ms for asynchronous operation");
             return future.get();
+        } catch (InterruptedException | ExecutionException e) {
+            e.printStackTrace();
+            return null;
+        }
+    }
+
+    @GetMapping("postpostmap")
+    public HashMap<String, List<Post>> getPostsAndAlbumsWithMap() {
+        var start = LocalTime.now();
+        RestTemplate restTemplate = new RestTemplate();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setAccept(Arrays.asList(MediaType.APPLICATION_JSON));
+        HttpEntity<String> entity = new HttpEntity<>(null, headers);
+        List<String> keys = Arrays.asList("post1", "post2", "post3", "post4", "post5");
+
+        HashMap<String, List<Post>> resultMap = new HashMap<>();
+
+        for (String key: keys) {
+            ResponseEntity<List<Post>> postResponse = restTemplate.exchange(POSTS_URL, HttpMethod.GET, entity,
+                    new ParameterizedTypeReference<List<Post>>() {
+                    });
+            resultMap.put(key, postResponse.getBody());
+        }
+
+        var end = LocalTime.now();
+        Duration duration = Duration.between(start, end);
+        System.out.println("Took " + duration.toMillis() + " ms for synchronous operation");
+        return resultMap;
+    }
+
+    @GetMapping("asyncpostpostmap")
+    public HashMap<String, List<Post>> getPostsAndAlbumsAsyncWithMap() {
+        var start = LocalTime.now();
+        RestTemplate restTemplate = new RestTemplate();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setAccept(Arrays.asList(MediaType.APPLICATION_JSON));
+        HttpEntity<String> entity = new HttpEntity<>(null, headers);
+        Map<String, CompletableFuture<ResponseEntity<List<Post>>>> futureMap = new HashMap<>();
+        futureMap.put("post1", externalAppService.getPostFuture());
+        futureMap.put("post2", externalAppService.getPostFuture());
+        futureMap.put("post3", externalAppService.getPostFuture());
+        futureMap.put("post4", externalAppService.getPostFuture());
+        futureMap.put("post5", externalAppService.getPostFuture());
+
+        HashMap<String, List<Post>> resultMap = new HashMap<>();
+
+        try {
+            var future = CompletableFuture.allOf(futureMap.values().toArray(new CompletableFuture[0]))
+                    .supplyAsync(() -> {
+                        for (String key: futureMap.keySet()) {
+                            try {
+                                System.out.println("calling for " + key);
+                                List<Post> posts = futureMap.get(key).get().getBody();
+                                resultMap.put(key, posts);
+                            } catch (InterruptedException | ExecutionException e) {
+                                e.printStackTrace();
+                            }
+                        }
+                        return resultMap;
+                    });
+            var end = LocalTime.now();
+            Duration duration = Duration.between(start, end);
+            System.out.println("Took " + duration.toMillis() + " ms for asynchronous operation");
+            return future.thenApply((map) -> {
+                var postsCall = CompletableFuture.supplyAsync(() -> restTemplate.exchange(POSTS_URL, HttpMethod.GET, entity,
+                        new ParameterizedTypeReference<List<Post>>() {
+                        }));
+                try {
+                    var posts = postsCall.get().getBody();
+                    String key = "post6";
+                    System.out.println("calling for " + key);
+                    resultMap.put(key, posts);
+                    return resultMap;
+                } catch (InterruptedException | ExecutionException e) {
+                    e.printStackTrace();
+                    return null;
+                }
+            }).get();
         } catch (InterruptedException | ExecutionException e) {
             e.printStackTrace();
             return null;
